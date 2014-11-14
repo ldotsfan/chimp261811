@@ -1,0 +1,49 @@
+#!/bin/sh
+TMP=/tmp/xbox-menu.tmp$$
+main_menu() {
+	dialog --no-cancel --menu "Make your choice" 0 0 0 1 "Network Settings" 2 "Xbox Info" 3 "Partition Info" 4 "Format Extended Partitions" 5 "Reboot" 6 "Shutdown" 7 "Start a Linux shell" 2> "$TMP"
+	local ANSWER=`cat "$TMP"`
+	case $ANSWER in
+		1)
+                        network_settings_menu
+                        main_menu; ;;
+		2)
+			dialog --msgbox "`xbox-info -a`" 0 0
+			main_menu; ;;
+		3)
+			dialog --msgbox "`xboxdumper listpartitions /dev/hda`" 0 0 
+			main_menu; ;;
+		4)
+			clear
+			/usr/bin/lpartitioner
+			main_menu; ;;
+		5)
+			clear
+			/sbin/reboot; ;;
+		6)
+			clear
+			/sbin/poweroff; ;;
+		7)
+			dialog --inputbox "A USB keyboard is required to enter commands. Type \"ok\" to continue" 0 0 2> "$TMP"
+			if [ "$?" = 0 -a "`cat "$TMP"|tr '[A-Z]' '[a-z]'`" = ok ] ; then
+				clear
+				echo "Type exit to return to the menu"
+				/bin/sh -i
+			fi
+			main_menu; ;;
+		*)
+			;;
+	esac
+}
+
+network_settings_menu() {
+	local IP=`ifconfig eth0 | grep 'inet addr' | cut -d ':' -f 2 | cut -d ' ' -f 1`
+	if dialog --defaultno --yesno "Current IP Address: $IP\nDo you wish to reconfigure?" 0 0; then
+		/usr/bin/netcardconfig
+		network_settings_menu
+	fi
+}
+ver=$(uname -r | awk {' printf ("%2.1f",$1) '})
+[ $ver = 2.6 ] && /usr/bin/chimp && exit 0
+main_menu
+rm -f "$TMP"

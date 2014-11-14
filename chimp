@@ -1,0 +1,96 @@
+#!/bin/sh
+
+network_settings_menu() {
+        local IP=`ifconfig eth0 | grep 'inet addr' | cut -d ':' -f 2 | cut -d ' ' -f 1`
+        if dialog --defaultno --yesno "Current IP Address: $IP\nDo you wish to reconfigure?" 0 0; then
+                /usr/bin/netcardconfig
+                network_settings_menu
+        fi
+}
+
+choose_key() {
+local choice=1
+dialog --nocancel --title "Xbox HD locking tools "\
+		 --menu "Where is the key source " 25 75 5 \
+		1 "From Motherboard" \
+		2 "From /tmp/eeprom.bin" \
+		3 "From Master password:XBOXSCENE" \
+		4 "From Master password:TEAMASSEMBLY" \
+		5 "From /tmp/hddkey.txt" \
+		2> /tmp/choice.$$
+choice=`cat /tmp/choice.$$`
+case $choice in
+ 1) key_src="" ;;
+ 2) key_src=/tmp/eeprom.bin ;;
+ 3) key_src=XBOXSCENE ;;
+ 4) key_src=TEAMASSEMBLY ;;
+ 5) key_src=/tmp/hddkey.txt ;;
+esac
+rm /tmp/choice.$$
+return 
+}
+
+main_menu() {
+TMP=/tmp/xbox-menu.tmp$$
+dialog --nocancel --title "ldotsfan hdd tools" --menu "Choose option" 0 0 0 \
+		1 "Scan physical IDE devices" \
+		2 "Clone from master to slave" \
+		3 "Lock slave drive" \
+		4 "Unlock slave drive" \
+		5 "Display slave drive security status" \
+		6 "Unlock master drive" \
+		7 "Display master drive security status" \
+		8 "Format extended partitions on master drive" \
+		9 "Network Settings" \
+		10 "Backup eeprom" \
+		11 "Reboot" \
+		12 "Shutdown" \
+		13 "Start a Linux shell" 2> /tmp/choice.$$
+choice=`cat /tmp/choice.$$`
+case $choice in
+  1) /usr/bin/scanide; 
+	main_menu; ;;
+  2) /usr/bin/cloneab; 
+	main_menu; ;;
+  3)    choose_key ;
+	clear ;
+	/usr/bin/lockhdb lock "$key_src" ;
+	main_menu; ;;
+  4)    choose_key ;
+	clear ;
+	/usr/bin/lockhdb unlock "$key_src" ;
+	/usr/bin/lockhdb disable-pw "$key_src" ;
+	main_menu; ;;
+  5)    dialog --msgbox "`/usr/bin/hdsecinfo /dev/hdb`" 0 0 ;
+	main_menu;;
+  6)    choose_key ;
+  	clear ;
+  	/usr/bin/lockhda unlock "$key_src" ;
+	/usr/bin/lockhda disable-pw "$key_src" ;
+	main_menu;;
+  7)    dialog --msgbox "`/usr/bin/hdsecinfo /dev/hda`" 0 0 ;
+        main_menu;;
+  8)    /usr/bin/lpartitioner;
+	main_menu;;
+  9)    network_settings_menu
+	main_menu;;
+  10) 	/usr/sbin/xbox-info -r /tmp/eeprom.bin
+  	dialog --msgbox "Eeprom backup saved to /tmp/eeprom.bin" 8 45 ;
+  	main_menu;;
+  11) 	clear
+	/sbin/reboot; ;;
+  12)   clear
+	/sbin/poweroff; ;; 	
+  13)
+                       dialog --inputbox "A USB keyboard is required to enter commands. Type \"ok\" to continue" 0 0 2> "$TMP"
+                        if [ "$?" = 0 -a "`cat "$TMP"|tr '[A-Z]' '[a-z]'`" = ok ] ; then
+                                clear
+                                echo "Type exit to return to the menu"
+                                /bin/sh -i
+                        fi
+                        main_menu; ;;
+  *) ;;
+esac
+}
+main_menu
+rm -f /tmp/choice.$$
