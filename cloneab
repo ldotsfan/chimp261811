@@ -1,0 +1,203 @@
+#!/bin/sh
+
+F_START=15633072
+G_START=268435456
+CACHE_SIZE=1500
+C_SIZE=1000
+let my_tmp=0
+full_clone="$1"
+
+scanide
+
+is_fatx() {
+sig=$(dd if=$1 bs=4 count=1 2>/dev/null)
+if [ "$sig" = "FATX" ]; then
+return 0
+else
+return 1
+fi
+}
+
+has_parttable() {
+sig=$(dd if=$1 bs=1 count=8 skip=4 2>/dev/null)
+if [ "$sig" = "PARTINFO" ]; then
+return 0
+else
+return 1
+fi
+}
+
+prepare_hd () {
+local t=$1
+local h=$2
+local s=$3
+# just create the basic structre, 512k byte for Sys, X, Y, Z, C, E, F, G
+
+dd if=$h of=$t bs=512k count=1 2> /dev/null
+dd if=$s of=$t seek=1 bs=512k count=1 2> /dev/null
+dd if=$s of=$t seek=1501 bs=512k count=1 2> /dev/null
+dd if=$s of=$t seek=3001 bs=512k count=1 2> /dev/null
+dd if=$s of=$t seek=4501 bs=512k count=1 2> /dev/null
+dd if=$s of=$t seek=5501 bs=512k count=1 2> /dev/null
+dd if=$s of=$t seek=15633072 bs=512 count=1k 2> /dev/null
+dd if=$s of=$t seek=268435456 bs=512 count=1k 2> /dev/null
+}
+
+mini_clone_fg () {
+#only clone the signature sector of the F: and G:
+local s=$1
+local t=$2
+dd if=$s of=$t skip=15633072 seek=15633072 bs=512 count=1 2> /dev/null
+dd if=$s of=$t skip=268435456 seek=268435456 bs=512 count=1 2> /dev/null
+}
+
+progress_dd () {
+local s=$1
+local t=$2
+local option="$3"
+local t_file=$$.$my_tmp
+
+if [ "$no_progress" != "" ]; then
+watch -t -n 30 killall -USR1 dd & 
+dd if=$s of=$t bs=1024k $option
+killall watch
+else
+#let my_tmp=my_tmp+1
+clear
+echo -e "Cloning Status\n"
+/usr/bin/pv $s | dd of=$t bs=1024k $option
+#pid=$!
+#trap "kill $pid" 1 2 9 15
+#dialog --title "Device cloning" --ok-label "Stop" --timeout 3 --msgbox "Preparing $t" 10 75  > /dev/null 2>&1
+#case $? in
+#  0 ) kill $pid; sleep 3; cancel="true";;
+#esac
+#while [ -e /proc/$pid ]; do
+#kill -USR1 $pid
+#sleep 3
+#STATUS=$(tail -2 /tmp/$t_file)
+#dialog --title "Cloning from $s to $t in 10M blocks" --ok-label "Stop" --timeout 10 --msgbox "$STATUS" 10 75  > /dev/null 2>
+#case $? in
+#  0 ) kill $pid; sleep 3; cancel="true";;
+#esac
+#done
+#trap
+clear
+#rm /tmp/$t_file > /dev/null 2>&1
+#if [ "$cancel" != "true" ]; then
+return 0
+#else
+#return 1
+fi
+#fi
+}
+
+clone_parts() {
+for i in $1; do
+case $i in
+  *C*) progress_dd ${SRC}51 ${TARGET} seek=4501 bs=1024k || return 1;;
+  *E*) progress_dd ${SRC}50 ${TARGET} seek=5501 bs=1024k || return 1;;
+  *F*) dd if=/dev/hda bs=512 count=1 2> /dev/null | hexdump | grep "0000 8000" | awk '{ if (NR == 6) print $5 $4" "$7 $6; }' | while read PSTART PEND; do clear; echo -e "Cloning Status\n"; /usr/bin/pv ${SRC}55 | dd of=${TARGET} bs=512 seek=$((0x$PSTART)) count=$((0x$PEND)); done || return 1;;
+  *G*) dd if=/dev/hda bs=512 count=1 2> /dev/null | hexdump | grep "0000 8000" | awk '{ if (NR == 7) print $5 $4" "$7 $6; }' | while read PSTART PEND; do clear; echo -e "Cloning Status\n"; /usr/bin/pv ${SRC}56 | dd of=${TARGET} bs=512 seek=$((0x$PSTART)) count=$((0x$PEND)); done || return 1;;
+  esac
+done
+}
+
+choose_parts() {
+if [ "$full_clone" != "full" ]; then
+# ask what partitions to clone
+clone_partitions='C C-drive on E E-drive on F F-drive off G G-drive off'
+dialog --checklist "Partitions to clone" 20 50 10 $clone_partitions 2> /tmp/choice.$$
+case $? in
+ 0 ) parts_to_clone=$(cat /tmp/choice.$$);;
+esac
+rm /tmp/choice.$$
+clear
+fi
+}
+
+choose_style() {
+local choice=2
+dialog --nocancel --title "HD cloning from $SRC to $TARGET"\
+                 --radiolist "How to you like to clone it?" 25 75 5 \
+                "1" "full disk(byte by byte)" off \
+                "2" "selective(by partition/drives)" on \
+                2> /tmp/choice.$$
+case $? in
+ 0) choice=$(cat /tmp/choice.$$);;
+esac
+
+case $choice in
+ *1*) full_clone="full";;
+esac
+clear
+return
+}
+
+choose_progress() {
+local choice=2
+dialog --nocancel --title "HD cloning from $SRC to $TARGET"\
+                 --radiolist "How do you like to monitor the cloning progress" 25 75 5 \
+                "1" "blind(no progress till done, fastest)" off \
+                "2" "periodically showing progress done, much slower" on \
+                2> /tmp/choice.$$
+case $? in
+ 0) choice=$(cat /tmp/choice.$$);;
+esac
+
+case $choice in
+ *1*) no_progress="yes";;
+esac
+clear
+return
+}
+
+#starts here
+if [ -e /dev/hda ]; then
+SRC=/dev/hda
+else
+SRC=/dev/zero
+DD_OPTION="count=100000"
+fi
+
+if [ -e /dev/hdb ]; then
+TARGET=/dev/hdb
+else
+TARGET=/dev/null
+fi
+
+# find out what partition the source has
+
+if [ -e $TARGET ]; then
+hdparm -i $TARGET > /tmp/hdinfo.$$
+out=$(cat /tmp/hdinfo.$$)
+unset doit
+dialog --defaultno --title "Choose Yes will wipe out and reformat this disk($TARGET), BE WARNED" --yesno "$out" 25 75
+case $? in
+ 0 ) doit="yes";;
+esac
+rm /tmp/hdinfo.$$
+if [ "$doit" != "" ]; then
+xboxdumper prepare $TARGET 1
+clear
+#prepare_hd $TARGET /head.raw /fatx.raw
+#if [ -e ${SRC}55 ]; then
+#[ "$TARGET" != "/dev/null" ] && mini_clone_fg $SRC $TARGET
+#fi
+#scan_parts disc1 $TARGET
+if hasparttable ${SRC}; then
+dd if=$SRC of=$TARGET bs=512 count=8 2> /dev/null
+fi
+hdparm -z $TARGET
+choose_style
+choose_progress
+
+if [ "$full_clone" != "" ]; then
+progress_dd $SRC $TARGET
+else
+choose_parts
+clone_parts "$parts_to_clone"
+fi
+fi
+fi
+clear
